@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 const fs = require('fs');
+const path = require('path');
 const yaml = require('js-yaml');
 const parseArgs = require('minimist');
 const { CLOUDFORMATION_SCHEMA } = require('js-yaml-cloudformation-schema');
@@ -29,13 +30,14 @@ const key = argv.k || '$<<';
 // file variable syntax. The framework determines how to parse the file based
 // on extension and this should be updated to do the same.
 //
-function merge(obj, file) {
+function merge(obj, file, relativeTo = "") {
   const match = file.match(FILE_VAR_REGEX);
 
   // Assume the loaded file is a YAML file, parse it as such and merge it into
   // the original object.
   if (match?.groups?.path) {
-    const source = fs.readFileSync(match.groups.path, { encoding: 'utf8' });
+    const sourcePath = path.resolve(relativeTo, match.groups.path);
+    const source = fs.readFileSync(sourcePath, { encoding: 'utf8' });
     const parsed = yaml.load(source, { schema: CLOUDFORMATION_SCHEMA });
     const value = match?.groups?.key ? parsed[match.groups.key] : parsed;
 
@@ -58,19 +60,19 @@ function merge(obj, file) {
 //
 // TODO: Detect circular references to avoid infinite recursion.
 //
-function walk(key, obj) {
+function walk(key, obj, relativeTo) {
   Object.entries(obj).forEach(([k, v]) => {
     // If the key matches the search term we perform a merge. If the value is a
     // string it should match the Serverless Framework "file" variable pattern
     // and if it's an array each element should match.
     if (k === key) {
       if (Array.isArray(v)) {
-        v.forEach((str) => void merge(obj, str));
+        v.forEach((str) => void merge(obj, str, relativeTo));
       } else {
-        merge(obj, v);
+        merge(obj, v, relativeTo);
       }
     } else if (v && typeof v === 'object') {
-      walk(key, v);
+      walk(key, v, relativeTo);
     }
   });
 }
@@ -80,6 +82,7 @@ function walk(key, obj) {
 // invalid YAML, and run the merge on the resulting object.
 const source = fs.readFileSync(inp, { encoding: 'utf8' });
 const parsed = yaml.load(source, { schema: CLOUDFORMATION_SCHEMA });
+const { dir: relativeTo } = path.parse(inp);
 
-walk(key, parsed);
+walk(key, parsed, relativeTo);
 fs.writeFileSync(out, JSON.stringify(parsed));
